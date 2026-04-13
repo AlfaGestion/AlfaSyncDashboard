@@ -223,6 +223,7 @@ public sealed class MainForm : Form
             var tpv = selected[i];
             try
             {
+                _progressLocal.Value = 0;
                 tpv.EstadoActual = "Sincronizando...";
                 _grid.Refresh();
 
@@ -242,7 +243,8 @@ public sealed class MainForm : Form
                         });
                     },
                     AppendLog,
-                    _cts.Token);
+                    _cts.Token,
+                    Environment.UserName);
 
                 tpv.EstadoActual = "OK";
                 tpv.UltimaSincronizacion = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
@@ -252,6 +254,7 @@ public sealed class MainForm : Form
             catch (OperationCanceledException)
             {
                 tpv.EstadoActual = "Cancelado";
+                SafeUi(() => _progressLocal.Value = 0);
                 AppendLog($"[{tpv.Descripcion}] proceso cancelado por el usuario.");
                 await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Cancelado por el usuario", "CANCEL", CancellationToken.None);
                 break;
@@ -259,6 +262,7 @@ public sealed class MainForm : Form
             catch (Exception ex)
             {
                 tpv.EstadoActual = "ERROR";
+                SafeUi(() => _progressLocal.Value = 0);
                 AppendLog($"[{tpv.Descripcion}] error: {ex.Message}");
                 await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), ex.ToString(), "ERROR", CancellationToken.None);
             }

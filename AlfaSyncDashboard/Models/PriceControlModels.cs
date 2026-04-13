@@ -10,6 +10,7 @@ public sealed class PriceControlRequest
 {
     public PriceControlMode Mode { get; set; } = PriceControlMode.Cost;
     public int Limit { get; set; } = 100;
+    public bool LoadAll { get; set; }
     public string SearchText { get; set; } = string.Empty;
     public string PriceListId { get; set; } = string.Empty;
     public string TipoLista { get; set; } = string.Empty;
@@ -18,10 +19,15 @@ public sealed class PriceControlRequest
 
 public sealed class PriceControlRow
 {
+    public string ListId { get; set; } = string.Empty;
+    public string TipoLista { get; set; } = string.Empty;
     public string ArticleId { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public decimal? CentralValue { get; set; }
     public Dictionary<string, decimal?> LocalValues { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string ComparisonKey
+        => $"{ListId}|{TipoLista}|{ArticleId}";
 }
 
 public sealed class PriceControlResult

@@ -7,6 +7,7 @@ namespace AlfaSyncDashboard.Services;
 
 public sealed class PriceControlService
 {
+    private const int MaxArticleParametersPerQuery = 2000;
     private readonly AppSettings _settings;
 
     public PriceControlService(AppSettings settings)
@@ -36,7 +37,7 @@ public sealed class PriceControlService
                 var values = await LoadLocalValuesAsync(local, rows, request, cancellationToken);
                 result.LocalMatches[key] = values.Count;
                 foreach (var row in rows)
-                    row.LocalValues[key] = values.TryGetValue(row.ArticleId, out var value) ? value : null;
+                    row.LocalValues[key] = values.TryGetValue(row.ComparisonKey, out var value) ? value : null;
             }
             catch (Exception ex)
             {
@@ -98,6 +99,8 @@ ORDER BY Nombre, IdLista, TipoLista;";
         {
             rows.Add(new PriceControlRow
             {
+                ListId = dr["IDLISTA"]?.ToString()?.Trim() ?? string.Empty,
+                TipoLista = dr["TIPOLISTA"]?.ToString()?.Trim() ?? string.Empty,
                 ArticleId = dr["IDARTICULO"]?.ToString()?.Trim() ?? string.Empty,
                 Description = dr["DESCRIPCION"]?.ToString()?.Trim() ?? string.Empty,
                 CentralValue = dr.IsDBNull(dr.GetOrdinal("VALOR")) ? null : dr.GetDecimal(dr.GetOrdinal("VALOR"))
@@ -123,24 +126,30 @@ ORDER BY Nombre, IdLista, TipoLista;";
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        var sql = BuildLocalSql(articleIds, request);
         await using var cn = new SqlConnection(local.BuildLocalConnectionString());
         await cn.OpenAsync(cancellationToken);
-        await using var cmd = new SqlCommand(sql, cn)
-        {
-            CommandTimeout = _settings.CommandTimeoutSeconds
-        };
 
-        AddRequestParameters(cmd, request);
-        AddArticleParameters(cmd, articleIds);
-
-        await using var dr = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await dr.ReadAsync(cancellationToken))
+        foreach (var batch in SplitArticleIds(articleIds, MaxArticleParametersPerQuery))
         {
-            var articleId = dr["IDARTICULO"]?.ToString()?.Trim() ?? string.Empty;
-            decimal? value = dr.IsDBNull(dr.GetOrdinal("VALOR")) ? null : dr.GetDecimal(dr.GetOrdinal("VALOR"));
-            if (!string.IsNullOrWhiteSpace(articleId))
-                result[articleId] = value;
+            var sql = BuildLocalSql(batch, request);
+            await using var cmd = new SqlCommand(sql, cn)
+            {
+                CommandTimeout = _settings.CommandTimeoutSeconds
+            };
+
+            AddRequestParameters(cmd, request);
+            AddArticleParameters(cmd, batch);
+
+            await using var dr = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await dr.ReadAsync(cancellationToken))
+            {
+                var articleId = dr["IDARTICULO"]?.ToString()?.Trim() ?? string.Empty;
+                var listId = dr["IDLISTA"]?.ToString()?.Trim() ?? string.Empty;
+                var tipoLista = dr["TIPOLISTA"]?.ToString()?.Trim() ?? string.Empty;
+                decimal? value = dr.IsDBNull(dr.GetOrdinal("VALOR")) ? null : dr.GetDecimal(dr.GetOrdinal("VALOR"));
+                if (!string.IsNullOrWhiteSpace(articleId))
+                    result[BuildComparisonKey(listId, tipoLista, articleId)] = value;
+            }
         }
 
         return result;
@@ -161,10 +170,27 @@ ORDER BY Nombre, IdLista, TipoLista;";
             cmd.Parameters.AddWithValue($"@id{i}", articleIds[i]);
     }
 
+    private static IEnumerable<string[]> SplitArticleIds(string[] articleIds, int chunkSize)
+    {
+        for (var i = 0; i < articleIds.Length; i += chunkSize)
+            yield return articleIds.Skip(i).Take(chunkSize).ToArray();
+    }
+
     private static string BuildCentralSql(PriceControlRequest request)
     {
         return request.Mode switch
         {
+            PriceControlMode.Cost when request.LoadAll => @"
+SELECT TOP (@limit)
+    LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+    LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
+    LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
+    LTRIM(RTRIM(A.DESCRIPCION)) AS DESCRIPCION,
+    CAST(P.COSTO AS decimal(18,4)) AS VALOR
+FROM dbo.V_MA_PRECIOS P
+INNER JOIN dbo.V_MA_ARTICULOS A ON A.IDARTICULO = P.IDARTICULO
+WHERE (@search = '' OR LTRIM(RTRIM(P.IDARTICULO)) LIKE @searchLike OR LTRIM(RTRIM(A.DESCRIPCION)) LIKE @searchLike)
+ORDER BY LTRIM(RTRIM(P.IdLista)), LTRIM(RTRIM(P.TipoLista)), LTRIM(RTRIM(A.DESCRIPCION)), LTRIM(RTRIM(P.IDARTICULO));",
             PriceControlMode.Cost => @"
 WITH Base AS
 (
@@ -178,16 +204,31 @@ WITH Base AS
     WHERE (@search = '' OR P.IDARTICULO LIKE @searchLike OR A.DESCRIPCION LIKE @searchLike)
 )
 SELECT TOP (@limit)
+    '' AS IDLISTA,
+    '' AS TIPOLISTA,
     IDARTICULO,
     DESCRIPCION,
     VALOR
 FROM Base
 WHERE RN = 1
 ORDER BY DESCRIPCION, IDARTICULO;",
+            PriceControlMode.PriceList when request.LoadAll => $@"
+SELECT TOP (@limit)
+    LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+    LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
+    LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
+    LTRIM(RTRIM(A.DESCRIPCION)) AS DESCRIPCION,
+    CAST(P.{GetPriceColumnName(request.PriceColumn)} AS decimal(18,4)) AS VALOR
+FROM dbo.V_MA_PRECIOS P
+INNER JOIN dbo.V_MA_ARTICULOS A ON A.IDARTICULO = P.IDARTICULO
+WHERE (@search = '' OR LTRIM(RTRIM(P.IDARTICULO)) LIKE @searchLike OR LTRIM(RTRIM(A.DESCRIPCION)) LIKE @searchLike)
+ORDER BY LTRIM(RTRIM(P.IdLista)), LTRIM(RTRIM(P.TipoLista)), LTRIM(RTRIM(A.DESCRIPCION)), LTRIM(RTRIM(P.IDARTICULO));",
             PriceControlMode.PriceList => $@"
 WITH Base AS
 (
     SELECT
+        LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+        LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
         LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
         LTRIM(RTRIM(A.DESCRIPCION)) AS DESCRIPCION,
         CAST(P.{GetPriceColumnName(request.PriceColumn)} AS decimal(18,4)) AS VALOR,
@@ -199,12 +240,14 @@ WITH Base AS
       AND (@search = '' OR LTRIM(RTRIM(P.IDARTICULO)) LIKE @searchLike OR LTRIM(RTRIM(A.DESCRIPCION)) LIKE @searchLike)
 )
 SELECT TOP (@limit)
+    IDLISTA,
+    TIPOLISTA,
     IDARTICULO,
     DESCRIPCION,
     VALOR
 FROM Base
 WHERE RN = 1
-ORDER BY DESCRIPCION, IDARTICULO;",
+ORDER BY IDLISTA, TIPOLISTA, DESCRIPCION, IDARTICULO;",
             _ => throw new InvalidOperationException("Modo de control no soportado.")
         };
     }
@@ -214,23 +257,43 @@ ORDER BY DESCRIPCION, IDARTICULO;",
         var filter = BuildArticleFilter(articleIds, "LTRIM(RTRIM(P.IDARTICULO))");
         return request.Mode switch
         {
+            PriceControlMode.Cost when request.LoadAll => $@"
+SELECT
+    LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+    LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
+    LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
+    CAST(P.COSTO AS decimal(18,4)) AS VALOR
+FROM dbo.V_MA_PRECIOS P
+WHERE {filter};",
             PriceControlMode.Cost => $@"
 WITH Base AS
 (
     SELECT
+        '' AS IDLISTA,
+        '' AS TIPOLISTA,
         LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
         CAST(P.COSTO AS decimal(18,4)) AS VALOR,
         ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(P.IDARTICULO)) ORDER BY P.TipoLista, P.IdLista) AS RN
     FROM dbo.V_MA_PRECIOS P
     WHERE {filter}
 )
-SELECT IDARTICULO, VALOR
+SELECT IDLISTA, TIPOLISTA, IDARTICULO, VALOR
 FROM Base
 WHERE RN = 1;",
+            PriceControlMode.PriceList when request.LoadAll => $@"
+SELECT
+    LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+    LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
+    LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
+    CAST(P.{GetPriceColumnName(request.PriceColumn)} AS decimal(18,4)) AS VALOR
+FROM dbo.V_MA_PRECIOS P
+WHERE {filter};",
             PriceControlMode.PriceList => $@"
 WITH Base AS
 (
     SELECT
+        LTRIM(RTRIM(P.IdLista)) AS IDLISTA,
+        LTRIM(RTRIM(P.TipoLista)) AS TIPOLISTA,
         LTRIM(RTRIM(P.IDARTICULO)) AS IDARTICULO,
         CAST(P.{GetPriceColumnName(request.PriceColumn)} AS decimal(18,4)) AS VALOR,
         ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(P.IDARTICULO)) ORDER BY LTRIM(RTRIM(P.TipoLista)), LTRIM(RTRIM(P.IdLista))) AS RN
@@ -239,7 +302,7 @@ WITH Base AS
       AND (@tipoLista = '' OR LTRIM(RTRIM(P.TipoLista)) = @tipoLista)
       AND {filter}
 )
-SELECT IDARTICULO, VALOR
+SELECT IDLISTA, TIPOLISTA, IDARTICULO, VALOR
 FROM Base
 WHERE RN = 1;",
             _ => throw new InvalidOperationException("Modo de control no soportado.")
@@ -271,11 +334,16 @@ WHERE RN = 1;",
     private static string BuildLocalKey(TpvInfo local)
         => $"{local.Codigo}|{local.Descripcion}";
 
+    private static string BuildComparisonKey(string listId, string tipoLista, string articleId)
+        => $"{listId}|{tipoLista}|{articleId}";
+
     private static string BuildCentralTitle(PriceControlRequest request)
     {
         return request.Mode switch
         {
+            PriceControlMode.Cost when request.LoadAll => "Central todos los costos",
             PriceControlMode.Cost => "Costo central",
+            PriceControlMode.PriceList when request.LoadAll => $"Central todas las listas Precio{request.PriceColumn}",
             PriceControlMode.PriceList => $"Central Lista {request.PriceListId.Trim()} Precio{request.PriceColumn}" +
                                           (string.IsNullOrWhiteSpace(request.TipoLista) ? string.Empty : $" Tipo {request.TipoLista.Trim()}"),
             _ => "Central"

@@ -8,10 +8,12 @@ namespace AlfaSyncDashboard.Services;
 public sealed class ScriptExecutionService
 {
     private readonly AppSettings _settings;
+    private readonly SyncStatisticsService _syncStatisticsService;
 
-    public ScriptExecutionService(AppSettings settings)
+    public ScriptExecutionService(AppSettings settings, SyncStatisticsService syncStatisticsService)
     {
         _settings = settings;
+        _syncStatisticsService = syncStatisticsService;
     }
 
     public async Task ExecuteForLocalAsync(
@@ -19,38 +21,71 @@ public sealed class ScriptExecutionService
         SyncExecutionMode mode,
         Action<ExecutionProgress> reportProgress,
         Action<string> appendLog,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? executionUser = null)
     {
         if (!_settings.ScriptSets.TryGetValue(tpv.ScriptSet, out var scriptSet))
             throw new InvalidOperationException($"No existe el ScriptSet '{tpv.ScriptSet}' para el local {tpv.Descripcion}.");
 
         var stages = BuildStages(scriptSet, mode);
         var stopwatch = Stopwatch.StartNew();
+        var effectiveExecutionUser = string.IsNullOrWhiteSpace(executionUser) ? Environment.UserName : executionUser.Trim();
 
         for (int i = 0; i < stages.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var stage = stages[i];
-            var overallPercent = (int)Math.Round((i / (double)stages.Count) * 100d);
-            reportProgress(new ExecutionProgress
+            var stageStartedAt = DateTime.Now;
+            var overallPercent = 0;
+            try
             {
-                LocalDescripcion = tpv.Descripcion,
-                Etapa = stage.DisplayName,
-                StageIndex = i + 1,
-                TotalStages = stages.Count,
-                OverallPercent = overallPercent,
-                Elapsed = stopwatch.Elapsed,
-                EstimatedRemaining = EstimateRemaining(stopwatch.Elapsed, i, stages.Count),
-                Message = $"Iniciando {stage.DisplayName}"
-            });
+                var scriptPath = Path.Combine(_settings.DefaultScriptsPath, stage.FileName);
+                if (!File.Exists(scriptPath))
+                    throw new FileNotFoundException($"No se encontró el script: {scriptPath}");
 
-            var scriptPath = Path.Combine(_settings.DefaultScriptsPath, stage.FileName);
-            if (!File.Exists(scriptPath))
-                throw new FileNotFoundException($"No se encontró el script: {scriptPath}");
+                overallPercent = (int)Math.Round((i / (double)stages.Count) * 100d);
+                reportProgress(new ExecutionProgress
+                {
+                    LocalDescripcion = tpv.Descripcion,
+                    Etapa = stage.DisplayName,
+                    StageIndex = i + 1,
+                    TotalStages = stages.Count,
+                    OverallPercent = overallPercent,
+                    Elapsed = stopwatch.Elapsed,
+                    EstimatedRemaining = EstimateRemaining(stopwatch.Elapsed, i, stages.Count),
+                    Message = $"Iniciando {stage.DisplayName}"
+                });
 
-            var spec = ResolveSpec(stage.FileName);
-            appendLog($"[{tpv.Descripcion}] Sincronizando {stage.DisplayName} por conexión directa al local.");
-            await SyncDirectAsync(tpv, spec, appendLog, cancellationToken);
+                var spec = ResolveSpec(stage.FileName);
+                appendLog($"[{tpv.Descripcion}] Sincronizando {stage.DisplayName} por conexión directa al local.");
+                await SyncDirectAsync(tpv, spec, appendLog, cancellationToken);
+                await _syncStatisticsService.ReportStageAsync(
+                    tpv,
+                    stage.DisplayName,
+                    stage.FileName,
+                    i + 1,
+                    effectiveExecutionUser,
+                    stageStartedAt,
+                    DateTime.Now,
+                    null,
+                    appendLog,
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                await _syncStatisticsService.ReportStageAsync(
+                    tpv,
+                    stage.DisplayName,
+                    stage.FileName,
+                    i + 1,
+                    effectiveExecutionUser,
+                    stageStartedAt,
+                    DateTime.Now,
+                    ex,
+                    appendLog,
+                    CancellationToken.None);
+                throw;
+            }
 
             overallPercent = (int)Math.Round(((i + 1) / (double)stages.Count) * 100d);
             reportProgress(new ExecutionProgress
