@@ -17,6 +17,14 @@ internal static class Program
         var configService = new AppConfigService();
         var appSettings = configService.Load();
 
+        if (string.IsNullOrWhiteSpace(appSettings.CentralConnectionString))
+        {
+            using var wizard = new SetupWizardForm(appSettings);
+            if (wizard.ShowDialog() != DialogResult.OK)
+                return;
+            configService.Save(appSettings);
+        }
+
         var centralDataService = new CentralDataService(appSettings);
         var analysisService = new AnalysisService(appSettings);
         var priceControlService = new PriceControlService(appSettings);
