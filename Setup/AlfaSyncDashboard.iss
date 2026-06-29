@@ -56,7 +56,7 @@ Source: "{#BuildDir}\*"; \
 Source: "appsettings.setup.json"; \
   DestDir: "{app}"; \
   DestName: "appsettings.json"; \
-  Flags: ignoreversion
+  Flags: ignoreversion onlyifdoesntexist
 
 ; --- Scripts SQL de sincronizacion ---
 Source: "{#ScriptsDir}\*"; \
@@ -76,10 +76,6 @@ Filename: "{app}\{#AppExeName}"; \
   Description: "Iniciar {#AppName} ahora"; \
   Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-; Borrar archivos generados en tiempo de ejecucion que no forman parte del instalador
-Type: files; Name: "{app}\appsettings.json"
-
 [Code]
 // Preguntar si conservar la configuracion al desinstalar
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -94,4 +90,20 @@ begin
         RenameFile(
           ExpandConstant('{app}\appsettings.json'),
           ExpandConstant('{app}\appsettings.json.bak'));
+end;
+
+// Si una actualizacion previa dejo la configuracion respaldada, restaurarla.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ConfigPath: string;
+  BackupPath: string;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ConfigPath := ExpandConstant('{app}\appsettings.json');
+    BackupPath := ExpandConstant('{app}\appsettings.json.bak');
+
+    if (not FileExists(ConfigPath)) and FileExists(BackupPath) then
+      RenameFile(BackupPath, ConfigPath);
+  end;
 end;

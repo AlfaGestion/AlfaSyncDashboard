@@ -270,7 +270,6 @@ c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\cr
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\hostfxr.dll
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\hostpolicy.dll
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\mscordaccore.dll
-c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\mscordaccore_amd64_amd64_8.0.2526.11203.dll
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\mscordbi.dll
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\mscorrc.dll
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\msquic.dll
@@ -511,3 +510,5 @@ c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Release\net8.0-windows\win-x64\re
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Release\net8.0-windows\win-x64\AlfaSyncDashboard.pdb
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Release\net8.0-windows\win-x64\AlfaSyncDashboard.genruntimeconfig.cache
 c:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Release\net8.0-windows\win-x64\ref\AlfaSyncDashboard.dll
+C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64\mscordaccore_amd64_amd64_8.0.2726.22922.dll
+C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Release\net8.0-windows\win-x64\AlfaSyncDashboard.sourcelink.json

@@ -19,6 +19,7 @@ SELECT CODIGO, SUCURSAL, DESCRIPCION, SERVER, DBNAME, USUARIO, PASSWORD
 FROM dbo.V_TA_TPV WHERE BAJA = 0
 ORDER BY DESCRIPCION;";
 
+        var selectedCodes = new HashSet<string>(_settings.SelectedLocalCodes ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
         var result = new List<TpvInfo>();
         await using var cn = new SqlConnection(_settings.CentralConnectionString);
         await cn.OpenAsync(cancellationToken);
@@ -32,7 +33,7 @@ ORDER BY DESCRIPCION;";
         {
             var tpv = new TpvInfo
             {
-                Selected = false,
+                Selected = selectedCodes.Contains(dr["CODIGO"]?.ToString()?.Trim() ?? string.Empty),
                 Codigo = dr["CODIGO"]?.ToString()?.Trim() ?? string.Empty,
                 Sucursal = dr["SUCURSAL"]?.ToString()?.Trim() ?? string.Empty,
                 Descripcion = dr["DESCRIPCION"]?.ToString()?.Trim() ?? string.Empty,

@@ -1,6 +1,6 @@
 ----------------------------------------------------------------------
 -- COMPARARA ACTUALIZA LA TABLA v_ma_precioscab
--- BASE DE DATOS   / [DWJCPAZ]
+-- BASE DE DATOS    
 ----------------------------------------------------------------------
 -- Autor: Alberto Antunez
 -- Fecha: 21/01/2023

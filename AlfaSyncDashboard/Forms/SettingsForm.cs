@@ -1,64 +1,174 @@
 using AlfaSyncDashboard.Models;
+using Microsoft.Data.SqlClient;
 
 namespace AlfaSyncDashboard.Forms;
 
 public sealed class SettingsForm : Form
 {
-    private readonly TextBox _txtScriptsPath = new() { Dock = DockStyle.Top };
-    private readonly TextBox _txtCentralConnection = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical };
+    // Scripts
+    private readonly TextBox _txtScriptsPath = new();
+
+    // Conexion central
+    private readonly TextBox _txtServer   = new();
+    private readonly TextBox _txtDatabase = new();
+    private readonly TextBox _txtUser     = new();
+    private readonly TextBox _txtPassword = new() { UseSystemPasswordChar = true };
+    private readonly CheckBox _chkTrustCert = new() { Text = "Confiar en certificado del servidor", Checked = true };
+    private readonly CheckBox _chkEncrypt   = new() { Text = "Cifrar conexión", Checked = false };
+    private readonly Label _lblConnStatus   = new() { AutoSize = false };
 
     public AppSettings Settings { get; }
 
     public SettingsForm(AppSettings settings)
     {
         Settings = settings;
-        Text = "Configuración";
-        Width = 900;
-        Height = 380;
-        StartPosition = FormStartPosition.CenterParent;
-
-        var btnBrowse = new Button { Text = "Seleccionar carpeta...", Dock = DockStyle.Right, Width = 160 };
-        btnBrowse.Click += (_, _) => BrowseFolder();
-
-        var pathPanel = new Panel { Dock = DockStyle.Top, Height = 34 };
-        pathPanel.Controls.Add(_txtScriptsPath);
-        pathPanel.Controls.Add(btnBrowse);
-
-        var btnSave = new Button { Text = "Guardar", Dock = DockStyle.Right, Width = 120 };
-        btnSave.Click += (_, _) => SaveAndClose();
-        var btnCancel = new Button { Text = "Cancelar", Dock = DockStyle.Right, Width = 120 };
-        btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 44 };
-        bottom.Controls.Add(btnSave);
-        bottom.Controls.Add(btnCancel);
-
-        var lbl1 = new Label { Text = "Ruta base de scripts", Dock = DockStyle.Top, Height = 20 };
-        var lbl2 = new Label { Text = "Connection string central", Dock = DockStyle.Top, Height = 20 };
-
-        Controls.Add(_txtCentralConnection);
-        Controls.Add(lbl2);
-        Controls.Add(pathPanel);
-        Controls.Add(lbl1);
-        Controls.Add(bottom);
-
-        _txtScriptsPath.Text = settings.DefaultScriptsPath;
-        _txtCentralConnection.Text = settings.CentralConnectionString;
+        SuspendLayout();
+        BuildForm();
+        LoadValues(settings);
+        ResumeLayout(false);
     }
 
-    private void BrowseFolder()
+    private void BuildForm()
     {
-        using var dialog = new FolderBrowserDialog();
-        dialog.SelectedPath = _txtScriptsPath.Text;
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-            _txtScriptsPath.Text = dialog.SelectedPath;
+        Text = "Configuración";
+        ClientSize = new Size(540, 420);
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+
+        int y = 14;
+
+        // ── Scripts ──────────────────────────────────────────────────────────
+        AddLabel("Ruta base de scripts", 14, y); y += 22;
+
+        _txtScriptsPath.Left = 14; _txtScriptsPath.Top = y; _txtScriptsPath.Width = 398; _txtScriptsPath.Height = 24;
+        Controls.Add(_txtScriptsPath);
+
+        var btnBrowse = new Button { Text = "Examinar...", Left = 420, Top = y - 1, Width = 106, Height = 26 };
+        btnBrowse.Click += (_, _) =>
+        {
+            using var dlg = new FolderBrowserDialog { SelectedPath = _txtScriptsPath.Text };
+            if (dlg.ShowDialog(this) == DialogResult.OK)
+                _txtScriptsPath.Text = dlg.SelectedPath;
+        };
+        Controls.Add(btnBrowse);
+        y += 36;
+
+        // ── Separador ────────────────────────────────────────────────────────
+        Controls.Add(new Label
+        {
+            Text = "Conexión central",
+            Font = new Font(Font, FontStyle.Bold),
+            Left = 14, Top = y, Width = 300, Height = 20, AutoSize = false
+        });
+        y += 22;
+        Controls.Add(new Label { Left = 14, Top = y, Width = 512, Height = 1, BackColor = Color.LightGray });
+        y += 10;
+
+        // ── Campos de conexión ───────────────────────────────────────────────
+        void Row(string label, Control ctrl)
+        {
+            AddLabel(label, 14, y + 2);
+            ctrl.Left = 170; ctrl.Top = y; ctrl.Width = 356; ctrl.Height = 24;
+            Controls.Add(ctrl);
+            y += 32;
+        }
+
+        Row("Servidor:", _txtServer);
+        Row("Base de datos:", _txtDatabase);
+        Row("Usuario:", _txtUser);
+        Row("Contraseña:", _txtPassword);
+
+        y += 2;
+        _chkTrustCert.Left = 170; _chkTrustCert.Top = y; _chkTrustCert.Width = 340; _chkTrustCert.Height = 22;
+        Controls.Add(_chkTrustCert);
+        y += 26;
+        _chkEncrypt.Left = 170; _chkEncrypt.Top = y; _chkEncrypt.Width = 220; _chkEncrypt.Height = 22;
+        Controls.Add(_chkEncrypt);
+        y += 34;
+
+        // ── Probar conexión ──────────────────────────────────────────────────
+        var btnTest = new Button { Text = "Probar conexión", Left = 170, Top = y, Width = 150, Height = 28 };
+        btnTest.Click += async (_, _) => await TestConnectionAsync();
+        Controls.Add(btnTest);
+
+        _lblConnStatus.Left = 14; _lblConnStatus.Top = y + 34; _lblConnStatus.Width = 512; _lblConnStatus.Height = 22;
+        _lblConnStatus.Font = new Font(Font.FontFamily, 9f);
+        Controls.Add(_lblConnStatus);
+        y += 62;
+
+        // ── Botones finales ──────────────────────────────────────────────────
+        var btnSave = new Button { Text = "Guardar", Left = 316, Top = y, Width = 100, Height = 30 };
+        btnSave.Click += (_, _) => SaveAndClose();
+
+        var btnCancel = new Button { Text = "Cancelar", Left = 426, Top = y, Width = 100, Height = 30 };
+        btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+
+        Controls.Add(btnSave);
+        Controls.Add(btnCancel);
+
+        ClientSize = new Size(540, y + 50);
+    }
+
+    private void LoadValues(AppSettings settings)
+    {
+        _txtScriptsPath.Text = settings.DefaultScriptsPath;
+
+        if (string.IsNullOrWhiteSpace(settings.CentralConnectionString))
+            return;
+
+        try
+        {
+            var b = new SqlConnectionStringBuilder(settings.CentralConnectionString);
+            _txtServer.Text   = b.DataSource;
+            _txtDatabase.Text = b.InitialCatalog;
+            _txtUser.Text     = b.UserID;
+            _txtPassword.Text = b.Password;
+            _chkEncrypt.Checked   = b.Encrypt == SqlConnectionEncryptOption.Mandatory;
+            _chkTrustCert.Checked = b.TrustServerCertificate;
+        }
+        catch
+        {
+            // Si el connection string existente no se puede parsear, dejar los campos vacíos
+        }
+    }
+
+    private async Task TestConnectionAsync()
+    {
+        _lblConnStatus.ForeColor = Color.DimGray;
+        _lblConnStatus.Text = "Probando conexión...";
+
+        try
+        {
+            await using var cn = new SqlConnection(BuildConnectionString());
+            await cn.OpenAsync();
+            _lblConnStatus.Text = "✔  Conexión exitosa";
+            _lblConnStatus.ForeColor = Color.FromArgb(0, 140, 0);
+        }
+        catch (Exception ex)
+        {
+            _lblConnStatus.Text = $"✘  {ex.Message}";
+            _lblConnStatus.ForeColor = Color.DarkRed;
+        }
     }
 
     private void SaveAndClose()
     {
         Settings.DefaultScriptsPath = _txtScriptsPath.Text.Trim();
-        Settings.CentralConnectionString = _txtCentralConnection.Text.Trim();
+        Settings.CentralConnectionString = BuildConnectionString();
         DialogResult = DialogResult.OK;
         Close();
     }
+
+    private string BuildConnectionString() =>
+        $"Server={_txtServer.Text.Trim()};" +
+        $"Database={_txtDatabase.Text.Trim()};" +
+        $"User Id={_txtUser.Text.Trim()};" +
+        $"Password={_txtPassword.Text};" +
+        $"TrustServerCertificate={(_chkTrustCert.Checked ? "True" : "False")};" +
+        $"Encrypt={(_chkEncrypt.Checked ? "True" : "False")};";
+
+    private void AddLabel(string text, int x, int y) =>
+        Controls.Add(new Label { Text = text, Left = x, Top = y, Width = 152, Height = 20, AutoSize = false });
 }

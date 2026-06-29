@@ -7,6 +7,7 @@ namespace AlfaSyncDashboard.Services;
 
 public sealed class PriceControlService
 {
+    private const string SalesTipoLista = "V";
     private readonly AppSettings _settings;
 
     public PriceControlService(AppSettings settings)
@@ -55,6 +56,7 @@ public sealed class PriceControlService
         const string sql = @"
 SELECT DISTINCT IdLista, Nombre, TipoLista
 FROM dbo.V_MA_PRECIOSCAB
+WHERE LTRIM(RTRIM(TipoLista)) = 'V'
 ORDER BY Nombre, IdLista, TipoLista;";
 
         var result = new List<PriceListOption>();
@@ -148,11 +150,12 @@ ORDER BY Nombre, IdLista, TipoLista;";
 
     private static void AddRequestParameters(SqlCommand cmd, PriceControlRequest request)
     {
+        var tipoLista = NormalizeTipoLista(request);
         cmd.Parameters.AddWithValue("@limit", request.Limit);
         cmd.Parameters.AddWithValue("@search", request.SearchText.Trim());
         cmd.Parameters.AddWithValue("@searchLike", $"%{request.SearchText.Trim()}%");
         cmd.Parameters.AddWithValue("@priceListId", request.PriceListId.Trim());
-        cmd.Parameters.AddWithValue("@tipoLista", request.TipoLista.Trim());
+        cmd.Parameters.AddWithValue("@tipoLista", tipoLista);
     }
 
     private static void AddArticleParameters(SqlCommand cmd, string[] articleIds)
@@ -195,7 +198,7 @@ WITH Base AS
     FROM dbo.V_MA_PRECIOS P
     INNER JOIN dbo.V_MA_ARTICULOS A ON A.IDARTICULO = P.IDARTICULO
     WHERE LTRIM(RTRIM(P.IdLista)) = @priceListId
-      AND (@tipoLista = '' OR LTRIM(RTRIM(P.TipoLista)) = @tipoLista)
+      AND LTRIM(RTRIM(P.TipoLista)) = @tipoLista
       AND (@search = '' OR LTRIM(RTRIM(P.IDARTICULO)) LIKE @searchLike OR LTRIM(RTRIM(A.DESCRIPCION)) LIKE @searchLike)
 )
 SELECT TOP (@limit)
@@ -236,7 +239,7 @@ WITH Base AS
         ROW_NUMBER() OVER (PARTITION BY LTRIM(RTRIM(P.IDARTICULO)) ORDER BY LTRIM(RTRIM(P.TipoLista)), LTRIM(RTRIM(P.IdLista))) AS RN
     FROM dbo.V_MA_PRECIOS P
     WHERE LTRIM(RTRIM(P.IdLista)) = @priceListId
-      AND (@tipoLista = '' OR LTRIM(RTRIM(P.TipoLista)) = @tipoLista)
+      AND LTRIM(RTRIM(P.TipoLista)) = @tipoLista
       AND {filter}
 )
 SELECT IDARTICULO, VALOR
@@ -270,6 +273,9 @@ WHERE RN = 1;",
 
     private static string BuildLocalKey(TpvInfo local)
         => $"{local.Codigo}|{local.Descripcion}";
+
+    private static string NormalizeTipoLista(PriceControlRequest request)
+        => request.Mode == PriceControlMode.PriceList ? SalesTipoLista : request.TipoLista.Trim();
 
     private static string BuildCentralTitle(PriceControlRequest request)
     {

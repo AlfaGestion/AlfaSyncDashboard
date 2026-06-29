@@ -13,6 +13,8 @@ public sealed class MainForm : Form
     private readonly PriceControlService _priceControlService;
     private readonly ScriptExecutionService _scriptExecutionService;
     private readonly SyncLogService _logService;
+    private readonly SyncRunnerService _syncRunnerService;
+    private readonly ScheduledTaskService _scheduledTaskService;
     private AppSettings _settings;
 
     private readonly BindingList<TpvInfo> _tpvs = new();
@@ -30,7 +32,9 @@ public sealed class MainForm : Form
         AnalysisService analysisService,
         PriceControlService priceControlService,
         ScriptExecutionService scriptExecutionService,
-        SyncLogService logService)
+        SyncLogService logService,
+        SyncRunnerService syncRunnerService,
+        ScheduledTaskService scheduledTaskService)
     {
         _configService = configService;
         _centralDataService = centralDataService;
@@ -38,6 +42,8 @@ public sealed class MainForm : Form
         _priceControlService = priceControlService;
         _scriptExecutionService = scriptExecutionService;
         _logService = logService;
+        _syncRunnerService = syncRunnerService;
+        _scheduledTaskService = scheduledTaskService;
         _settings = configService.Load();
 
         Text = "Alfa Sync Dashboard";
@@ -65,11 +71,12 @@ public sealed class MainForm : Form
         Button btnConnections = NewButton("Probar conexiones", async (_, _) => await TestConnectionsAsync());
         Button btnAnalyze = NewButton("Analizar seleccionados", async (_, _) => await AnalyzeSelectedAsync());
         Button btnControl = NewButton("Control precios", (_, _) => ShowPriceControl());
+        Button btnHistory = NewButton("Historial y tarea", (_, _) => ShowHistoryAndTask());
         Button btnPrices = NewButton("Enviar precios y costos", async (_, _) => await ExecuteSelectedAsync(SyncExecutionMode.PricesAndCosts));
         Button btnFull = NewButton("Enviar todo", async (_, _) => await ExecuteSelectedAsync(SyncExecutionMode.Full));
         Button btnCancel = NewButton("Cancelar", (_, _) => CancelCurrent());
 
-        topButtons.Controls.AddRange([btnRefresh, btnSettings, btnConnections, btnAnalyze, btnControl, btnPrices, btnFull, btnCancel]);
+        topButtons.Controls.AddRange([btnRefresh, btnSettings, btnConnections, btnAnalyze, btnControl, btnHistory, btnPrices, btnFull, btnCancel]);
 
         _grid.Dock = DockStyle.Fill;
         _grid.AutoGenerateColumns = false;
@@ -86,6 +93,16 @@ public sealed class MainForm : Form
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(TpvInfo.EstadoConexion), HeaderText = "Conexión", Width = 110, ReadOnly = true });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(TpvInfo.UltimaSincronizacion), HeaderText = "Última sync", Width = 145, ReadOnly = true });
         _grid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = nameof(TpvInfo.EstadoActual), HeaderText = "Estado", Width = 280, ReadOnly = true });
+        _grid.CurrentCellDirtyStateChanged += (_, _) =>
+        {
+            if (_grid.IsCurrentCellDirty)
+                _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+        };
+        _grid.CellValueChanged += (_, e) =>
+        {
+            if (e.RowIndex >= 0 && e.ColumnIndex == 0)
+                SaveSelectedLocals();
+        };
 
         _txtLog.Dock = DockStyle.Fill;
         _txtLog.Multiline = true;
@@ -218,54 +235,40 @@ public sealed class MainForm : Form
         _progressLocal.Value = 0;
         var started = DateTime.Now;
 
-        for (int i = 0; i < selected.Count; i++)
+        try
         {
-            var tpv = selected[i];
-            try
-            {
-                tpv.EstadoActual = "Sincronizando...";
-                _grid.Refresh();
+            await _syncRunnerService.RunAsync(
+                selected,
+                mode,
+                progress =>
+                {
+                    var currentIndex = selected.FindIndex(x => string.Equals(x.Descripcion, progress.LocalDescripcion, StringComparison.OrdinalIgnoreCase));
 
-                await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Inicio de sincronización", "RUNNING", _cts.Token);
-                await _scriptExecutionService.ExecuteForLocalAsync(
-                    tpv,
-                    mode,
-                    progress =>
+                    SafeUi(() =>
                     {
-                        SafeUi(() =>
-                        {
-                            _progressLocal.Value = Math.Clamp(progress.OverallPercent, 0, 100);
-                            var generalPercent = ((i + (progress.OverallPercent / 100d)) / selected.Count) * 100d;
-                            _progressGeneral.Value = Math.Clamp((int)Math.Round(generalPercent), 0, 100);
-                            _lblStatus.Text = $"{progress.LocalDescripcion} - {progress.Etapa} ({progress.OverallPercent}%)";
-                            _lblTimers.Text = $"Transcurrido: {progress.Elapsed:hh\\:mm\\:ss} | Restante estimado etapa: {progress.EstimatedRemaining:hh\\:mm\\:ss}";
-                        });
-                    },
-                    AppendLog,
-                    _cts.Token);
-
-                tpv.EstadoActual = "OK";
-                tpv.UltimaSincronizacion = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
-                await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Sincronización OK", "OK", _cts.Token);
-                AppendLog($"[{tpv.Descripcion}] sincronización finalizada correctamente.");
-            }
-            catch (OperationCanceledException)
-            {
-                tpv.EstadoActual = "Cancelado";
-                AppendLog($"[{tpv.Descripcion}] proceso cancelado por el usuario.");
-                await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Cancelado por el usuario", "CANCEL", CancellationToken.None);
-                break;
-            }
-            catch (Exception ex)
-            {
-                tpv.EstadoActual = "ERROR";
-                AppendLog($"[{tpv.Descripcion}] error: {ex.Message}");
-                await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), ex.ToString(), "ERROR", CancellationToken.None);
-            }
-            finally
-            {
-                _grid.Refresh();
-            }
+                        _progressLocal.Value = Math.Clamp(progress.OverallPercent, 0, 100);
+                        var itemIndex = currentIndex >= 0 ? currentIndex : 0;
+                        var generalPercent = ((itemIndex + (progress.OverallPercent / 100d)) / selected.Count) * 100d;
+                        _progressGeneral.Value = Math.Clamp((int)Math.Round(generalPercent), 0, 100);
+                        _lblStatus.Text = $"{progress.LocalDescripcion} - {progress.Etapa} ({progress.OverallPercent}%)";
+                        _lblTimers.Text = $"Transcurrido: {progress.Elapsed:hh\\:mm\\:ss} | Restante estimado etapa: {progress.EstimatedRemaining:hh\\:mm\\:ss}";
+                    });
+                },
+                AppendLog,
+                (tpv, state) =>
+                {
+                    tpv.EstadoActual = state;
+                    SafeUi(() => _grid.Refresh());
+                },
+                _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("Proceso cancelado por el usuario.");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Error de sincronización: {ex.Message}");
         }
 
         SetStatus($"Proceso terminado. Duración total: {(DateTime.Now - started):hh\\:mm\\:ss}");
@@ -295,9 +298,27 @@ public sealed class MainForm : Form
         form.ShowDialog(this);
     }
 
+    private void ShowHistoryAndTask()
+    {
+        using var form = new SyncHistoryForm(_logService, _scheduledTaskService);
+        form.ShowDialog(this);
+    }
+
     private void CancelCurrent()
     {
         _cts?.Cancel();
+    }
+
+    private void SaveSelectedLocals()
+    {
+        _settings.SelectedLocalCodes = _tpvs
+            .Where(x => x.Selected)
+            .Select(x => x.Codigo)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _configService.Save(_settings);
     }
 
     private void AppendLog(string message)

@@ -1,6 +1,6 @@
 ----------------------------------------------------------------------
 -- COMPARARA ACTUALIZA LA TABLA v_ma_articulos 
--- BASE DE DATOS   / ALFANET
+-- BASE DE DATOS   
 ----------------------------------------------------------------------
 -- Autor: Alberto Antunez
 -- Fecha: 23/04/2020

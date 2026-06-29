@@ -58,3 +58,4 @@ C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Debug\net8.0-windows\refint\AlfaS
 C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Debug\net8.0-windows\AlfaSyncDashboard.pdb
 C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Debug\net8.0-windows\AlfaSyncDashboard.genruntimeconfig.cache
 C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Debug\net8.0-windows\ref\AlfaSyncDashboard.dll
+C:\dev\AlfaSyncDashboard\AlfaSyncDashboard\obj\Debug\net8.0-windows\AlfaSyncDashboard.sourcelink.json

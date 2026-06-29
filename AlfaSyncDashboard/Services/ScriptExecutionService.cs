@@ -7,6 +7,7 @@ namespace AlfaSyncDashboard.Services;
 
 public sealed class ScriptExecutionService
 {
+    private const string SalesTipoLista = "V";
     private readonly AppSettings _settings;
 
     public ScriptExecutionService(AppSettings settings)
@@ -86,10 +87,23 @@ public sealed class ScriptExecutionService
 
         try
         {
+            if (_settings.DisableDestinationTriggersDuringSync)
+            {
+                appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: desactivando triggers en destino.");
+                await ExecuteNonQueryAsync(localConnection, transaction, BuildDisableTriggersSql(spec), cancellationToken);
+            }
+
             await CreateTempTableAsync(localConnection, transaction, tempTableName, spec, cancellationToken);
             await BulkCopyToTempTableAsync(localConnection, transaction, tempTableName, sourceTable, cancellationToken);
             var updated = await ExecuteScalarIntAsync(localConnection, transaction, BuildUpdateSql(tempTableName, spec), cancellationToken);
             var inserted = await ExecuteScalarIntAsync(localConnection, transaction, BuildInsertSql(tempTableName, spec), cancellationToken);
+
+            if (_settings.DisableDestinationTriggersDuringSync)
+            {
+                await ExecuteNonQueryAsync(localConnection, transaction, BuildEnableTriggersSql(spec), cancellationToken);
+                appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: triggers reactivados en destino.");
+            }
+
             await transaction.CommitAsync(cancellationToken);
             appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: {updated} actualizados, {inserted} insertados.");
         }
@@ -172,17 +186,19 @@ public sealed class ScriptExecutionService
     }
 
     private static string BuildSelectSql(SyncTableSpec spec)
-        => $"SELECT {JoinColumns(spec.Columns)} FROM {spec.SourceObject};";
+        => $"SELECT {BuildSelectColumns(spec)} FROM {spec.SourceObject};";
 
     private static string BuildUpdateSql(string tempTableName, SyncTableSpec spec)
     {
         var updateColumns = spec.Columns.Except(spec.KeyColumns, StringComparer.OrdinalIgnoreCase).ToArray();
         var setClause = string.Join(", ", updateColumns.Select(col => $"target.[{col}] = source.[{col}]"));
+        var changeDetection = BuildChangeDetectionSql(updateColumns);
         return $@"
 UPDATE target
 SET {setClause}
 FROM {spec.TargetObject} target
 INNER JOIN {tempTableName} source ON {BuildJoinCondition(spec.KeyColumns)}
+WHERE {changeDetection}
 SELECT @@ROWCOUNT;";
     }
 
@@ -202,11 +218,35 @@ WHERE NOT EXISTS (
 SELECT @@ROWCOUNT;";
     }
 
+    private static string BuildDisableTriggersSql(SyncTableSpec spec)
+        => $"DISABLE TRIGGER ALL ON {spec.TargetObject};";
+
+    private static string BuildEnableTriggersSql(SyncTableSpec spec)
+        => $"ENABLE TRIGGER ALL ON {spec.TargetObject};";
+
     private static string BuildJoinCondition(IReadOnlyList<string> keyColumns)
         => string.Join(" AND ", keyColumns.Select(col => $"target.[{col}] = source.[{col}]"));
 
+    private static string BuildChangeDetectionSql(IReadOnlyList<string> columns)
+    {
+        var sourceColumns = string.Join(", ", columns.Select(col => $"source.[{col}]"));
+        var targetColumns = string.Join(", ", columns.Select(col => $"target.[{col}]"));
+        return $"EXISTS (SELECT {sourceColumns} EXCEPT SELECT {targetColumns})";
+    }
+
     private static string JoinColumns(IEnumerable<string> columns)
         => string.Join(", ", columns.Select(col => $"[{col}]"));
+
+    private static string BuildSelectColumns(SyncTableSpec spec)
+        => string.Join(", ", spec.Columns.Select(col => BuildSelectColumn(spec, col)));
+
+    private static string BuildSelectColumn(SyncTableSpec spec, string column)
+    {
+        if (spec.FixedValues.TryGetValue(column, out var value))
+            return $"'{value.Replace("'", "''")}' AS [{column}]";
+
+        return $"[{column}]";
+    }
 
     private static SyncTableSpec ResolveSpec(string fileName)
     {
@@ -255,13 +295,21 @@ SELECT @@ROWCOUNT;";
                     "Rec2", "Rec3", "IdTarifaFlete", "PorcSeguro", "FhDtoDesde", "FhDtoHasta", "IDCOMPULSA", "IDINSERT",
                     "ESTADO", "MKTeorico", "CambioCodBarra", "USUARIO", "FHALTA", "PRECIO9", "CantidadOf2", "PRECIO10",
                     "CantidadOf3"
+                },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["TipoLista"] = SalesTipoLista
                 }),
             "ACTUALIZA_V_MA_PRECIOSCAB.SQL" => new SyncTableSpec(
                 "PreciosCab",
                 "PRECIOSCAB",
                 "[dbo].[V_MA_PRECIOSCAB]",
                 new[] { "IdLista", "TipoLista" },
-                new[] { "IdLista", "Nombre", "Grupo", "VigenciaDesde", "VigenciaHasta", "TipoLista" }),
+                new[] { "IdLista", "Nombre", "Grupo", "VigenciaDesde", "VigenciaHasta", "TipoLista" },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["TipoLista"] = SalesTipoLista
+                }),
             _ => throw new InvalidOperationException($"No existe una definición de sincronización directa para '{fileName}'.")
         };
     }
@@ -293,8 +341,10 @@ SELECT @@ROWCOUNT;";
         string TempSuffix,
         string TargetObject,
         IReadOnlyList<string> KeyColumns,
-        IReadOnlyList<string> Columns)
+        IReadOnlyList<string> Columns,
+        IReadOnlyDictionary<string, string>? fixedValues = null)
     {
         public string SourceObject => TargetObject;
+        public IReadOnlyDictionary<string, string> FixedValues { get; } = fixedValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 }

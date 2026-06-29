@@ -6,6 +6,7 @@ namespace AlfaSyncDashboard.Forms;
 
 public sealed class PriceControlForm : Form
 {
+    private const string SalesTipoLista = "V";
     private readonly PriceControlService _service;
     private readonly IReadOnlyList<TpvInfo> _locals;
 
@@ -84,7 +85,8 @@ public sealed class PriceControlForm : Form
         {
             await AutoRefreshAsync();
         };
-        _txtTipoLista.PlaceholderText = "Opcional, dejar vacío";
+        _txtTipoLista.Text = SalesTipoLista;
+        _txtTipoLista.ReadOnly = true;
 
         _cmbPriceColumn.DropDownStyle = ComboBoxStyle.DropDownList;
         for (var i = 1; i <= 8; i++)
@@ -139,6 +141,10 @@ public sealed class PriceControlForm : Form
         if (!isPriceMode)
         {
             _txtTipoLista.Text = string.Empty;
+        }
+        else
+        {
+            _txtTipoLista.Text = SalesTipoLista;
         }
     }
 
@@ -222,7 +228,7 @@ public sealed class PriceControlForm : Form
             Limit = (int)_numLimit.Value,
             SearchText = _txtSearch.Text.Trim(),
             PriceListId = (_cmbList.SelectedItem as PriceListOption)?.IdLista ?? string.Empty,
-            TipoLista = _txtTipoLista.Text.Trim(),
+            TipoLista = _cmbMode.SelectedIndex == 1 ? SalesTipoLista : string.Empty,
             PriceColumn = _cmbPriceColumn.SelectedIndex + 1
         };
 

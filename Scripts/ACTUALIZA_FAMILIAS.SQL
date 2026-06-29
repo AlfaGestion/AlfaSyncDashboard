@@ -1,6 +1,6 @@
 ----------------------------------------------------------------------
 -- COMPARARA ACTUALIZA LA TABLA V_TA_FAMILIAS 
--- BASE DE DATOS   / ALFANET
+-- BASE DE DATOS    
 ----------------------------------------------------------------------
 -- Autor: Alberto Antunez
 -- Fecha: 27/07/2021
