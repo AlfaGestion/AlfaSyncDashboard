@@ -1,4 +1,5 @@
 using AlfaSyncDashboard.Models;
+using System.Diagnostics;
 
 namespace AlfaSyncDashboard.Services;
 
@@ -39,35 +40,55 @@ public sealed class SyncRunnerService
             for (int i = 0; i < selected.Count; i++)
             {
                 var tpv = selected[i];
+                var localStopwatch = Stopwatch.StartNew();
                 try
                 {
                     updateLocalState?.Invoke(tpv, "Sincronizando...");
                     await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Inicio de sincronización", "RUNNING", cancellationToken);
 
-                    await _scriptExecutionService.ExecuteForLocalAsync(
+                    var stageResults = await _scriptExecutionService.ExecuteForLocalAsync(
                         tpv,
                         mode,
                         progress => reportProgress?.Invoke(progress),
                         appendLog,
                         cancellationToken);
 
+                    foreach (var stageResult in stageResults)
+                    {
+                        await _logService.WriteAsync(
+                            tpv.Descripcion,
+                            stageResult.StageDisplayName,
+                            BuildStageLogMessage(stageResult),
+                            "OK",
+                            cancellationToken);
+                    }
+
                     tpv.EstadoActual = "OK";
                     tpv.UltimaSincronizacion = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
-                    await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Sincronización OK", "OK", cancellationToken);
-                    appendLog($"[{tpv.Descripcion}] sincronización finalizada correctamente.");
+                    localStopwatch.Stop();
+                    var totalMessage = $"Sincronización OK | duración total={FormatDuration(localStopwatch.Elapsed)} | etapas={stageResults.Count}";
+                    await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), totalMessage, "OK", cancellationToken);
+                    appendLog($"[{tpv.Descripcion}] sincronización finalizada correctamente. Duración total: {FormatDuration(localStopwatch.Elapsed)}.");
                 }
                 catch (OperationCanceledException)
                 {
+                    localStopwatch.Stop();
                     tpv.EstadoActual = "Cancelado";
-                    appendLog($"[{tpv.Descripcion}] proceso cancelado.");
-                    await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Cancelado", "CANCEL", CancellationToken.None);
+                    appendLog($"[{tpv.Descripcion}] proceso cancelado. Duración acumulada: {FormatDuration(localStopwatch.Elapsed)}.");
+                    await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), $"Cancelado | duración acumulada={FormatDuration(localStopwatch.Elapsed)}", "CANCEL", CancellationToken.None);
                     throw;
                 }
                 catch (Exception ex)
                 {
+                    localStopwatch.Stop();
                     tpv.EstadoActual = "ERROR";
                     appendLog($"[{tpv.Descripcion}] error: {ex.Message}");
-                    await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), ex.ToString(), "ERROR", CancellationToken.None);
+                    await _logService.WriteAsync(
+                        tpv.Descripcion,
+                        mode.ToString(),
+                        $"Duración hasta error={FormatDuration(localStopwatch.Elapsed)} | {ex}",
+                        "ERROR",
+                        CancellationToken.None);
                 }
                 finally
                 {
@@ -76,4 +97,10 @@ public sealed class SyncRunnerService
             }
         }
     }
+
+    private static string BuildStageLogMessage(StageExecutionResult result)
+        => $"Central={result.SourceRowCount} | Insertados={result.InsertedCount} | Actualizados={result.UpdatedCount} | Duración={FormatDuration(result.Duration)}";
+
+    private static string FormatDuration(TimeSpan duration)
+        => duration.ToString(@"hh\:mm\:ss");
 }

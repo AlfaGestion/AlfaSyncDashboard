@@ -1,38 +1,120 @@
 # Alfa Sync Dashboard
 
-Proyecto WinForms para controlar el envío de artículos, precios y cabeceras de listas a los locales, manteniendo la lógica actual basada en scripts SQL.
+Proyecto WinForms para controlar la sincronización de datos entre la base central y los puntos de venta.
 
 ## Qué hace esta versión
 
 - Carga los locales desde `dbo.V_TA_TPV`
 - Permite probar conexiones a cada local usando `SERVER / DBNAME / USUARIO / PASSWORD`
-- Ejecuta **Artículos + PreciosCab + Precios** o **Familias + Artículos + PreciosCab + Precios**
-- Muestra progreso general y por local
-- Muestra log en vivo
-- Guarda historial en `dbo.LOG_SYNC` (la tabla se crea automáticamente en la base central)
-- Incluye un análisis básico de diferencias:
-  - artículos faltantes
-  - diferencias de costo
-  - cabeceras faltantes
-  - precios faltantes
-  - diferencias de precios
+- Permite analizar diferencias entre central y local
+- Incluye control de precios por lista
+- Guarda historial en `dbo.LOG_SYNC`
+- Permite automatizar la ejecución con tarea programada
+- Evita doble ejecución simultánea en la misma máquina
+- Sincroniza todas las etapas por conexión directa al local
 
-## Importante sobre la lógica de ejecución
+## Modos de sincronización
 
-Para **preservar la forma de trabajo actual**, la ejecución de los scripts se hace contra la **base central** usando la connection string central configurada en `appsettings.json`.
+### `Enviar precios y costos`
 
-Es decir, esta versión mantiene la lógica actual de scripts como:
+Ejecuta:
 
-- `ACTUALIZA_ARTICULOS.SQL`
-- `ACTUALIZA_V_MA_PRECIOS.SQL`
-- `ACTUALIZA_V_MA_PRECIOSCAB.SQL`
+1. `Artículos`
+2. `PreciosCab`
+3. `Precios`
 
-que ya contienen los linked servers y el comportamiento actual.
+### `Enviar todo`
 
-Las conexiones directas a cada local se usan para:
+Ejecuta:
 
-- probar conectividad
-- analizar diferencias
+1. `Categorías artículo`
+2. `Rubros`
+3. `Unidades`
+4. `Tipos artículo`
+5. `Familias`
+6. `Artículos`
+7. `PreciosCab`
+8. `Precios`
+
+## Lógica de ejecución
+
+La sincronización trabaja por conexión directa:
+
+- lee los datos desde central
+- crea una tabla temporal en el local
+- copia los datos en bloque
+- hace `UPDATE` solo sobre filas distintas
+- inserta las filas faltantes
+
+No depende de linked servers ni del contenido de archivos `.sql`.
+
+## Reglas especiales actualmente aplicadas
+
+- `V_MA_PRECIOSCAB` trabaja con `TipoLista = 'V'`
+- `V_MA_PRECIOS` trabaja con `TipoLista = 'V'`
+- `V_MA_PRECIOS` valida existencia por `IdLista + IdArticulo`
+
+## Configuración
+
+Editar `AlfaSyncDashboard/appsettings.json`.
+
+Campos principales:
+
+```json
+"DefaultScriptsPath": "C:\\dev\\AlfaSyncDashboard\\Scripts",
+"CentralConnectionString": "...",
+"DisableDestinationTriggersDuringSync": true,
+"SelectedLocalCodes": []
+```
+
+`DefaultScriptsPath` se mantiene por compatibilidad de configuración, pero la sincronización directa actual no depende de archivos `.sql`.
+
+### `ScriptSets`
+
+Cada `ScriptSet` define la secuencia lógica de etapas. La app mantiene los nombres por compatibilidad, pero la ejecución real es directa y no depende de los archivos `.sql`.
+
+Ejemplo:
+
+```json
+"DEFAULT": {
+  "FamiliesScript": "ACTUALIZA_FAMILIAS.SQL",
+  "CategoriesScript": "ACTUALIZA_CATEGORIAS_ARTICULO.SQL",
+  "RubrosScript": "ACTUALIZA_RUBROS.SQL",
+  "UnitsScript": "ACTUALIZA_UNIDADES.SQL",
+  "ArticleTypesScript": "ACTUALIZA_TIPOS_ARTICULO.SQL",
+  "ArticlesScript": "ACTUALIZA_ARTICULOS.SQL",
+  "PriceCabScript": "ACTUALIZA_V_MA_PRECIOSCAB.SQL",
+  "PricesScript": "ACTUALIZA_V_MA_PRECIOS.SQL"
+}
+```
+
+## Selección de locales
+
+- los locales marcados en `Sel` se guardan en `appsettings.json`
+- esa selección se reutiliza al abrir la app
+- la tarea programada usa esa misma selección
+
+## Automatización
+
+La app soporta ejecución por consola:
+
+```powershell
+AlfaSyncDashboard.exe --sync prices
+AlfaSyncDashboard.exe --sync full
+```
+
+También puede crear o actualizar una tarea programada desde la pantalla `Historial y tarea`.
+
+## Protección contra doble ejecución
+
+La app usa un bloqueo exclusivo local para impedir dos sincronizaciones simultáneas en la misma máquina, incluso con múltiples usuarios por escritorio remoto.
+
+## Instalación
+
+El setup:
+
+- no pisa `appsettings.json` si ya existe
+- ya no necesita copiar scripts SQL para la sincronización
 
 ## Requisitos
 
@@ -41,86 +123,17 @@ Las conexiones directas a cada local se usan para:
 - .NET 8 SDK
 - Acceso a SQL Server central
 - Acceso a SQL Server de los locales
+- Inno Setup 6 para generar instalador
 
-## Estructura
+## Cómo generar el setup
 
-- `AlfaSyncDashboard.sln`
-- `AlfaSyncDashboard/` proyecto WinForms
-- `Scripts/` scripts base y copia del CMD actual
-
-## Configuración inicial
-
-Editar `AlfaSyncDashboard/appsettings.json`
-
-### 1. Connection string central
-
-```json
-"CentralConnectionString": "Server=WIN-TUNPH1OHJM9\\ALFANET;Database=DISTRIWALTERP;User Id=DISTRIWALTERP;Password=DISTRIWALTERP;TrustServerCertificate=True;Encrypt=False;"
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Setup\Build-Setup.ps1
 ```
 
-### 2. Ruta de scripts
+El instalador queda en:
 
-Por default:
-
-```json
-"DefaultScriptsPath": "C:\\TAREASALFA"
-```
-
-Podés cambiarla desde la app en `Configuración`.
-
-### 3. Mapeo de scripts por local
-
-Ejemplo incluido:
-
-- locales cuya descripción contiene `MALVINAS` => `MALVINAS`
-- resto => `DEFAULT`
-
-Si necesitás más variantes, agregalas en:
-
-```json
-"LocalScriptMappings"
-```
-
-y definí los nombres de archivo en:
-
-```json
-"ScriptSets"
-```
-
-## Cómo arrancar
-
-1. Abrir `AlfaSyncDashboard.sln`
-2. Restaurar paquetes NuGet
-3. Ejecutar
-4. Ir a `Configuración` y revisar:
-   - connection string central
-   - ruta base de scripts
-5. Copiar los scripts SQL a `C:\TAREASALFA` o cambiar la ruta
-6. Cargar locales
-7. Probar conexiones
-8. Analizar o sincronizar
-
-## Recomendación de primer uso
-
-1. Probar conexiones
-2. Analizar un solo local
-3. Ejecutar `Enviar precios y costos` sobre un solo local
-4. Revisar `LOG_SYNC`
-5. Luego ampliar al resto
-
-## Limitaciones actuales
-
-- La ejecución mantiene el enfoque actual basado en scripts SQL existentes
-- El progreso es por etapas, no por fila interna del cursor
-- El análisis de diferencias puede ser pesado si las tablas son muy grandes
-- Si cambiás configuración de connection string, conviene reiniciar la app
-
-## Próxima mejora sugerida
-
-Optimizar los scripts SQL fila por fila para convertirlos a procesos set-based, empezando por:
-
-1. `V_MA_PRECIOS`
-2. `V_MA_ARTICULOS`
+- `Setup\Output\`
 
 ## Tabla de log
 
@@ -141,3 +154,8 @@ BEGIN
 END
 ```
 
+## Documentación de uso
+
+Ver también:
+
+- [docs/INSTRUCTIVO_USUARIO.md](C:/dev/AlfaSyncDashboard/docs/INSTRUCTIVO_USUARIO.md)

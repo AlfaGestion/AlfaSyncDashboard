@@ -15,6 +15,7 @@ public sealed class MainForm : Form
     private readonly SyncLogService _logService;
     private readonly SyncRunnerService _syncRunnerService;
     private readonly ScheduledTaskService _scheduledTaskService;
+    private readonly LocalFileLogService _localFileLogService;
     private AppSettings _settings;
 
     private readonly BindingList<TpvInfo> _tpvs = new();
@@ -34,7 +35,8 @@ public sealed class MainForm : Form
         ScriptExecutionService scriptExecutionService,
         SyncLogService logService,
         SyncRunnerService syncRunnerService,
-        ScheduledTaskService scheduledTaskService)
+        ScheduledTaskService scheduledTaskService,
+        LocalFileLogService localFileLogService)
     {
         _configService = configService;
         _centralDataService = centralDataService;
@@ -44,6 +46,7 @@ public sealed class MainForm : Form
         _logService = logService;
         _syncRunnerService = syncRunnerService;
         _scheduledTaskService = scheduledTaskService;
+        _localFileLogService = localFileLogService;
         _settings = configService.Load();
 
         Text = "Alfa Sync Dashboard";
@@ -327,6 +330,7 @@ public sealed class MainForm : Form
         {
             _txtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         });
+        _localFileLogService.Write(message);
     }
 
     private void SetStatus(string text)

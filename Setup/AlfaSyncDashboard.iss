@@ -15,7 +15,6 @@
 #define AppPublisher "Alfa"
 #define AppExeName   "AlfaSyncDashboard.exe"
 #define BuildDir     "..\AlfaSyncDashboard\bin\Release\net8.0-windows\win-x64"
-#define ScriptsDir   "..\Scripts"
 
 [Setup]
 AppId={{F3A7B2C1-94D8-4E6F-A1B0-3C5D7E8F9012}
@@ -57,11 +56,6 @@ Source: "appsettings.setup.json"; \
   DestDir: "{app}"; \
   DestName: "appsettings.json"; \
   Flags: ignoreversion onlyifdoesntexist
-
-; --- Scripts SQL de sincronizacion ---
-Source: "{#ScriptsDir}\*"; \
-  DestDir: "{app}\Scripts"; \
-  Flags: ignoreversion recursesubdirs
 
 [Icons]
 ; Menu Inicio

@@ -5,17 +5,13 @@ namespace AlfaSyncDashboard.Forms;
 
 public sealed class SettingsForm : Form
 {
-    // Scripts
-    private readonly TextBox _txtScriptsPath = new();
-
-    // Conexion central
-    private readonly TextBox _txtServer   = new();
+    private readonly TextBox _txtServer = new();
     private readonly TextBox _txtDatabase = new();
-    private readonly TextBox _txtUser     = new();
+    private readonly TextBox _txtUser = new();
     private readonly TextBox _txtPassword = new() { UseSystemPasswordChar = true };
     private readonly CheckBox _chkTrustCert = new() { Text = "Confiar en certificado del servidor", Checked = true };
-    private readonly CheckBox _chkEncrypt   = new() { Text = "Cifrar conexión", Checked = false };
-    private readonly Label _lblConnStatus   = new() { AutoSize = false };
+    private readonly CheckBox _chkEncrypt = new() { Text = "Cifrar conexión", Checked = false };
+    private readonly Label _lblConnStatus = new() { AutoSize = false };
 
     public AppSettings Settings { get; }
 
@@ -31,7 +27,7 @@ public sealed class SettingsForm : Form
     private void BuildForm()
     {
         Text = "Configuración";
-        ClientSize = new Size(540, 420);
+        ClientSize = new Size(540, 360);
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -39,23 +35,6 @@ public sealed class SettingsForm : Form
 
         int y = 14;
 
-        // ── Scripts ──────────────────────────────────────────────────────────
-        AddLabel("Ruta base de scripts", 14, y); y += 22;
-
-        _txtScriptsPath.Left = 14; _txtScriptsPath.Top = y; _txtScriptsPath.Width = 398; _txtScriptsPath.Height = 24;
-        Controls.Add(_txtScriptsPath);
-
-        var btnBrowse = new Button { Text = "Examinar...", Left = 420, Top = y - 1, Width = 106, Height = 26 };
-        btnBrowse.Click += (_, _) =>
-        {
-            using var dlg = new FolderBrowserDialog { SelectedPath = _txtScriptsPath.Text };
-            if (dlg.ShowDialog(this) == DialogResult.OK)
-                _txtScriptsPath.Text = dlg.SelectedPath;
-        };
-        Controls.Add(btnBrowse);
-        y += 36;
-
-        // ── Separador ────────────────────────────────────────────────────────
         Controls.Add(new Label
         {
             Text = "Conexión central",
@@ -66,7 +45,6 @@ public sealed class SettingsForm : Form
         Controls.Add(new Label { Left = 14, Top = y, Width = 512, Height = 1, BackColor = Color.LightGray });
         y += 10;
 
-        // ── Campos de conexión ───────────────────────────────────────────────
         void Row(string label, Control ctrl)
         {
             AddLabel(label, 14, y + 2);
@@ -88,7 +66,6 @@ public sealed class SettingsForm : Form
         Controls.Add(_chkEncrypt);
         y += 34;
 
-        // ── Probar conexión ──────────────────────────────────────────────────
         var btnTest = new Button { Text = "Probar conexión", Left = 170, Top = y, Width = 150, Height = 28 };
         btnTest.Click += async (_, _) => await TestConnectionAsync();
         Controls.Add(btnTest);
@@ -98,7 +75,6 @@ public sealed class SettingsForm : Form
         Controls.Add(_lblConnStatus);
         y += 62;
 
-        // ── Botones finales ──────────────────────────────────────────────────
         var btnSave = new Button { Text = "Guardar", Left = 316, Top = y, Width = 100, Height = 30 };
         btnSave.Click += (_, _) => SaveAndClose();
 
@@ -107,30 +83,25 @@ public sealed class SettingsForm : Form
 
         Controls.Add(btnSave);
         Controls.Add(btnCancel);
-
-        ClientSize = new Size(540, y + 50);
     }
 
     private void LoadValues(AppSettings settings)
     {
-        _txtScriptsPath.Text = settings.DefaultScriptsPath;
-
         if (string.IsNullOrWhiteSpace(settings.CentralConnectionString))
             return;
 
         try
         {
             var b = new SqlConnectionStringBuilder(settings.CentralConnectionString);
-            _txtServer.Text   = b.DataSource;
+            _txtServer.Text = b.DataSource;
             _txtDatabase.Text = b.InitialCatalog;
-            _txtUser.Text     = b.UserID;
+            _txtUser.Text = b.UserID;
             _txtPassword.Text = b.Password;
-            _chkEncrypt.Checked   = b.Encrypt == SqlConnectionEncryptOption.Mandatory;
+            _chkEncrypt.Checked = b.Encrypt == SqlConnectionEncryptOption.Mandatory;
             _chkTrustCert.Checked = b.TrustServerCertificate;
         }
         catch
         {
-            // Si el connection string existente no se puede parsear, dejar los campos vacíos
         }
     }
 
@@ -155,7 +126,6 @@ public sealed class SettingsForm : Form
 
     private void SaveAndClose()
     {
-        Settings.DefaultScriptsPath = _txtScriptsPath.Text.Trim();
         Settings.CentralConnectionString = BuildConnectionString();
         DialogResult = DialogResult.OK;
         Close();

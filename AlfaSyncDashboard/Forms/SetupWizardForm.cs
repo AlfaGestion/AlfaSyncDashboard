@@ -9,7 +9,6 @@ public sealed class SetupWizardForm : Form
     private int _currentStep;
     private bool _connectionVerified;
 
-    // Step 2 — connection
     private readonly TextBox _txtServer = new();
     private readonly TextBox _txtDatabase = new();
     private readonly TextBox _txtUser = new();
@@ -17,27 +16,19 @@ public sealed class SetupWizardForm : Form
     private readonly CheckBox _chkTrustCert = new() { Text = "Confiar en certificado del servidor", Checked = true };
     private readonly CheckBox _chkEncrypt = new() { Text = "Cifrar conexión", Checked = false };
     private readonly Label _lblConnStatus = new() { AutoSize = false };
-
-    // Step 3 — scripts
-    private readonly TextBox _txtScriptsPath = new();
-    private readonly Label _lblScriptsStatus = new() { AutoSize = false };
-
-    // Step 4 — summary
     private readonly Label _lblSummary = new() { AutoSize = false };
 
-    // Navigation
     private readonly Button _btnBack = new() { Text = "< Anterior", Width = 110, Height = 30 };
     private readonly Button _btnNext = new() { Text = "Siguiente >", Width = 110, Height = 30 };
 
-    private readonly Label[] _sidebarSteps = new Label[4];
-    private readonly Panel[] _stepPanels = new Panel[4];
+    private readonly Label[] _sidebarSteps = new Label[3];
+    private readonly Panel[] _stepPanels = new Panel[3];
 
-    private static readonly string[] StepNames = { "Bienvenida", "Servidor central", "Scripts", "Listo" };
+    private static readonly string[] StepNames = { "Bienvenida", "Servidor central", "Listo" };
 
     public SetupWizardForm(AppSettings settings)
     {
         _settings = settings;
-        _txtScriptsPath.Text = settings.DefaultScriptsPath;
 
         SuspendLayout();
         ConfigureForm();
@@ -60,8 +51,7 @@ public sealed class SetupWizardForm : Form
         var host = new Panel { Left = 180, Top = 0, Width = 520, Height = 430 };
         _stepPanels[0] = BuildPanelWelcome();
         _stepPanels[1] = BuildPanelConnection();
-        _stepPanels[2] = BuildPanelScripts();
-        _stepPanels[3] = BuildPanelSummary();
+        _stepPanels[2] = BuildPanelSummary();
 
         foreach (var p in _stepPanels)
         {
@@ -74,8 +64,6 @@ public sealed class SetupWizardForm : Form
         Controls.Add(host);
         Controls.Add(BuildNavBar());
     }
-
-    // ── Sidebar ──────────────────────────────────────────────────────────────
 
     private Panel BuildSidebar()
     {
@@ -111,8 +99,6 @@ public sealed class SetupWizardForm : Form
         return sidebar;
     }
 
-    // ── Nav bar ───────────────────────────────────────────────────────────────
-
     private Panel BuildNavBar()
     {
         var nav = new Panel { Left = 180, Top = 430, Width = 520, Height = 46, BackColor = Color.WhiteSmoke };
@@ -129,8 +115,6 @@ public sealed class SetupWizardForm : Form
         return nav;
     }
 
-    // ── Step panels ───────────────────────────────────────────────────────────
-
     private static Panel BuildPanelWelcome()
     {
         var p = new Panel();
@@ -143,8 +127,7 @@ public sealed class SetupWizardForm : Form
                 "Necesitará los siguientes datos:\n\n" +
                 "   •  Servidor SQL central (nombre o dirección IP)\n" +
                 "   •  Nombre de la base de datos\n" +
-                "   •  Usuario y contraseña de SQL Server\n" +
-                "   •  Carpeta con los archivos .SQL de sincronización\n\n" +
+                "   •  Usuario y contraseña de SQL Server\n\n" +
                 "Presione Siguiente para comenzar.",
             Left = 24, Top = 70, Width = 470, Height = 300,
             AutoSize = false, Font = new Font("Segoe UI", 10)
@@ -157,7 +140,6 @@ public sealed class SetupWizardForm : Form
         var p = new Panel();
         AddTitle(p, "Conexión al servidor central");
 
-        // Reset verified flag when any field changes
         void ResetVerified(object? s, EventArgs e)
         {
             _connectionVerified = false;
@@ -201,38 +183,6 @@ public sealed class SetupWizardForm : Form
         return p;
     }
 
-    private Panel BuildPanelScripts()
-    {
-        var p = new Panel();
-        AddTitle(p, "Carpeta de scripts");
-
-        p.Controls.Add(new Label
-        {
-            Text = "Indique la carpeta donde se encuentran los archivos .SQL de sincronización.",
-            Left = 24, Top = 66, Width = 470, Height = 36,
-            AutoSize = false, Font = new Font("Segoe UI", 10)
-        });
-
-        _txtScriptsPath.Left = 24; _txtScriptsPath.Top = 112; _txtScriptsPath.Width = 366; _txtScriptsPath.Height = 24;
-        _txtScriptsPath.TextChanged += (_, _) => ValidateScriptsPath();
-        p.Controls.Add(_txtScriptsPath);
-
-        var btnBrowse = new Button { Text = "Examinar...", Left = 398, Top = 110, Width = 90, Height = 28 };
-        btnBrowse.Click += (_, _) =>
-        {
-            using var dlg = new FolderBrowserDialog { SelectedPath = _txtScriptsPath.Text };
-            if (dlg.ShowDialog(this) == DialogResult.OK)
-                _txtScriptsPath.Text = dlg.SelectedPath;
-        };
-        p.Controls.Add(btnBrowse);
-
-        _lblScriptsStatus.Left = 24; _lblScriptsStatus.Top = 148; _lblScriptsStatus.Width = 460; _lblScriptsStatus.Height = 24;
-        _lblScriptsStatus.Font = new Font("Segoe UI", 9.5f);
-        p.Controls.Add(_lblScriptsStatus);
-
-        return p;
-    }
-
     private Panel BuildPanelSummary()
     {
         var p = new Panel();
@@ -244,8 +194,6 @@ public sealed class SetupWizardForm : Form
 
         return p;
     }
-
-    // ── Navigation logic ─────────────────────────────────────────────────────
 
     private void ShowStep(int step)
     {
@@ -268,8 +216,7 @@ public sealed class SetupWizardForm : Form
         _btnBack.Visible = step > 0;
         _btnNext.Text = step == _stepPanels.Length - 1 ? "Finalizar" : "Siguiente >";
 
-        if (step == 2) ValidateScriptsPath();
-        if (step == 3) UpdateSummary();
+        if (step == 2) UpdateSummary();
     }
 
     private async Task NextStepAsync()
@@ -295,8 +242,6 @@ public sealed class SetupWizardForm : Form
 
     private void PrevStep() => ShowStep(_currentStep - 1);
 
-    // ── Actions ───────────────────────────────────────────────────────────────
-
     private async Task TestConnectionAsync()
     {
         _connectionVerified = false;
@@ -318,46 +263,17 @@ public sealed class SetupWizardForm : Form
         }
     }
 
-    private void ValidateScriptsPath()
-    {
-        var path = _txtScriptsPath.Text.Trim();
-        if (string.IsNullOrEmpty(path)) { _lblScriptsStatus.Text = string.Empty; return; }
-
-        if (!Directory.Exists(path))
-        {
-            _lblScriptsStatus.Text = "✘  La carpeta no existe";
-            _lblScriptsStatus.ForeColor = Color.DarkRed;
-            return;
-        }
-
-        var count = Directory.GetFiles(path, "*.SQL", SearchOption.TopDirectoryOnly).Length
-                  + Directory.GetFiles(path, "*.sql", SearchOption.TopDirectoryOnly).Length;
-
-        if (count == 0)
-        {
-            _lblScriptsStatus.Text = "⚠  No se encontraron archivos .SQL en la carpeta";
-            _lblScriptsStatus.ForeColor = Color.FromArgb(180, 100, 0);
-        }
-        else
-        {
-            _lblScriptsStatus.Text = $"✔  {count} archivo{(count != 1 ? "s" : "")} .SQL encontrado{(count != 1 ? "s" : "")}";
-            _lblScriptsStatus.ForeColor = Color.FromArgb(0, 140, 0);
-        }
-    }
-
     private void UpdateSummary() =>
         _lblSummary.Text =
             "La configuración fue completada correctamente.\n\n" +
             $"Servidor:        {_txtServer.Text.Trim()}\n" +
             $"Base de datos:   {_txtDatabase.Text.Trim()}\n" +
-            $"Usuario:         {_txtUser.Text.Trim()}\n" +
-            $"Scripts:         {_txtScriptsPath.Text.Trim()}\n\n" +
+            $"Usuario:         {_txtUser.Text.Trim()}\n\n" +
             "Haga clic en Finalizar para guardar y abrir la aplicación.";
 
     private void ApplySettings()
     {
         _settings.CentralConnectionString = BuildConnectionString();
-        _settings.DefaultScriptsPath = _txtScriptsPath.Text.Trim();
     }
 
     private string BuildConnectionString() =>

@@ -15,7 +15,7 @@ public sealed class ScriptExecutionService
         _settings = settings;
     }
 
-    public async Task ExecuteForLocalAsync(
+    public async Task<IReadOnlyList<StageExecutionResult>> ExecuteForLocalAsync(
         TpvInfo tpv,
         SyncExecutionMode mode,
         Action<ExecutionProgress> reportProgress,
@@ -27,11 +27,15 @@ public sealed class ScriptExecutionService
 
         var stages = BuildStages(scriptSet, mode);
         var stopwatch = Stopwatch.StartNew();
+        var results = new List<StageExecutionResult>(stages.Count);
 
         for (int i = 0; i < stages.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var stage = stages[i];
+            if (string.IsNullOrWhiteSpace(stage.FileName))
+                throw new InvalidOperationException($"No está configurado el archivo SQL para la etapa '{stage.DisplayName}' en el ScriptSet '{tpv.ScriptSet}'.");
+
             var overallPercent = (int)Math.Round((i / (double)stages.Count) * 100d);
             reportProgress(new ExecutionProgress
             {
@@ -45,13 +49,11 @@ public sealed class ScriptExecutionService
                 Message = $"Iniciando {stage.DisplayName}"
             });
 
-            var scriptPath = Path.Combine(_settings.DefaultScriptsPath, stage.FileName);
-            if (!File.Exists(scriptPath))
-                throw new FileNotFoundException($"No se encontró el script: {scriptPath}");
-
             var spec = ResolveSpec(stage.FileName);
             appendLog($"[{tpv.Descripcion}] Sincronizando {stage.DisplayName} por conexión directa al local.");
-            await SyncDirectAsync(tpv, spec, appendLog, cancellationToken);
+            var stageResult = await SyncDirectAsync(tpv, spec, appendLog, cancellationToken);
+            stageResult.StageDisplayName = stage.DisplayName;
+            results.Add(stageResult);
 
             overallPercent = (int)Math.Round(((i + 1) / (double)stages.Count) * 100d);
             reportProgress(new ExecutionProgress
@@ -66,17 +68,27 @@ public sealed class ScriptExecutionService
                 Message = $"Finalizó {stage.DisplayName}"
             });
         }
+
+        return results;
     }
 
-    private async Task SyncDirectAsync(TpvInfo tpv, SyncTableSpec spec, Action<string> appendLog, CancellationToken cancellationToken)
+    private async Task<StageExecutionResult> SyncDirectAsync(TpvInfo tpv, SyncTableSpec spec, Action<string> appendLog, CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
         var sourceTable = await LoadSourceDataAsync(spec, cancellationToken);
+        var result = new StageExecutionResult
+        {
+            StageDisplayName = spec.DisplayName,
+            SourceRowCount = sourceTable.Rows.Count
+        };
+
         appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: {sourceTable.Rows.Count} filas leídas desde central.");
 
         if (sourceTable.Rows.Count == 0)
         {
-            appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: no hay filas para sincronizar.");
-            return;
+            result.Duration = stopwatch.Elapsed;
+            appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: central={result.SourceRowCount} | actualizados=0 | insertados=0 | duración={FormatDuration(result.Duration)}");
+            return result;
         }
 
         await using var localConnection = new SqlConnection(tpv.BuildLocalConnectionString());
@@ -97,6 +109,8 @@ public sealed class ScriptExecutionService
             await BulkCopyToTempTableAsync(localConnection, transaction, tempTableName, sourceTable, cancellationToken);
             var updated = await ExecuteScalarIntAsync(localConnection, transaction, BuildUpdateSql(tempTableName, spec), cancellationToken);
             var inserted = await ExecuteScalarIntAsync(localConnection, transaction, BuildInsertSql(tempTableName, spec), cancellationToken);
+            result.UpdatedCount = updated;
+            result.InsertedCount = inserted;
 
             if (_settings.DisableDestinationTriggersDuringSync)
             {
@@ -105,7 +119,9 @@ public sealed class ScriptExecutionService
             }
 
             await transaction.CommitAsync(cancellationToken);
-            appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: {updated} actualizados, {inserted} insertados.");
+            result.Duration = stopwatch.Elapsed;
+            appendLog($"[{tpv.Descripcion}] {spec.DisplayName}: central={result.SourceRowCount} | actualizados={result.UpdatedCount} | insertados={result.InsertedCount} | duración={FormatDuration(result.Duration)}");
+            return result;
         }
         catch
         {
@@ -259,6 +275,30 @@ SELECT @@ROWCOUNT;";
                 "[dbo].[V_TA_FAMILIAS]",
                 new[] { "IdFamilia" },
                 new[] { "IdFamilia", "Descripcion", "Transmision", "MKBase", "MkReal", "IdPolitica" }),
+            "ACTUALIZA_CATEGORIAS_ARTICULO.SQL" => new SyncTableSpec(
+                "Categorías artículo",
+                "CATEGORIASART",
+                "[dbo].[V_TA_CategoriaArticulo]",
+                new[] { "IdCategoria" },
+                new[] { "IdCategoria", "Descripcion" }),
+            "ACTUALIZA_RUBROS.SQL" => new SyncTableSpec(
+                "Rubros",
+                "RUBROS",
+                "[dbo].[V_TA_Rubros]",
+                new[] { "IdRubro" },
+                new[] { "IdRubro", "Descripcion", "Transmision", "COLOR", "Pesable" }),
+            "ACTUALIZA_UNIDADES.SQL" => new SyncTableSpec(
+                "Unidades",
+                "UNIDADES",
+                "[dbo].[V_TA_Unidad]",
+                new[] { "IdUnidad" },
+                new[] { "IdUnidad", "Descripcion", "Transmision" }),
+            "ACTUALIZA_TIPOS_ARTICULO.SQL" => new SyncTableSpec(
+                "Tipos artículo",
+                "TIPOSART",
+                "[dbo].[V_TA_TipoArticulo]",
+                new[] { "IdTipo" },
+                new[] { "IdTipo", "Descripcion", "Transmision" }),
             "ACTUALIZA_ARTICULOS.SQL" => new SyncTableSpec(
                 "Artículos",
                 "ARTICULOS",
@@ -283,7 +323,7 @@ SELECT @@ROWCOUNT;";
                 "Precios",
                 "PRECIOS",
                 "[dbo].[V_MA_PRECIOS]",
-                new[] { "IdLista", "IdArticulo", "TipoLista" },
+                new[] { "IdLista", "IdArticulo" },
                 new[]
                 {
                     "IdLista", "Nombre", "IdArticulo", "ConIVA", "Precio1", "Precio2", "Precio3", "Precio4", "Precio5",
@@ -324,11 +364,20 @@ SELECT @@ROWCOUNT;";
         return new TimeSpan(avgTicks * pending);
     }
 
+    private static string FormatDuration(TimeSpan duration)
+        => duration.ToString(@"hh\:mm\:ss");
+
     private static List<(string DisplayName, string FileName)> BuildStages(ScriptSet set, SyncExecutionMode mode)
     {
         var list = new List<(string DisplayName, string FileName)>();
         if (mode == SyncExecutionMode.Full)
+        {
+            list.Add(("Categorías artículo", set.CategoriesScript));
+            list.Add(("Rubros", set.RubrosScript));
+            list.Add(("Unidades", set.UnitsScript));
+            list.Add(("Tipos artículo", set.ArticleTypesScript));
             list.Add(("Familias", set.FamiliesScript));
+        }
 
         list.Add(("Artículos", set.ArticlesScript));
         list.Add(("PreciosCab", set.PriceCabScript));

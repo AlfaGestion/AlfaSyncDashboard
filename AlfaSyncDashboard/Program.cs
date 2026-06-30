@@ -38,12 +38,13 @@ internal static class Program
         var priceControlService = new PriceControlService(appSettings);
         var scriptExecutorService = new ScriptExecutionService(appSettings);
         var logService = new SyncLogService(appSettings);
+        var localFileLogService = new LocalFileLogService();
         var lockService = new ExecutionLockService();
         var syncRunnerService = new SyncRunnerService(scriptExecutorService, logService, lockService);
         var scheduledTaskService = new ScheduledTaskService();
 
         if (isConsoleMode)
-            return await RunConsoleSyncAsync(centralDataService, syncRunnerService, syncMode);
+            return await RunConsoleSyncAsync(centralDataService, syncRunnerService, syncMode, localFileLogService);
 
         ApplicationConfiguration.Initialize();
 
@@ -55,7 +56,8 @@ internal static class Program
             scriptExecutorService,
             logService,
             syncRunnerService,
-            scheduledTaskService));
+            scheduledTaskService,
+            localFileLogService));
 
         return 0;
     }
@@ -76,7 +78,8 @@ internal static class Program
     private static async Task<int> RunConsoleSyncAsync(
         CentralDataService centralDataService,
         SyncRunnerService syncRunnerService,
-        SyncExecutionMode syncMode)
+        SyncExecutionMode syncMode,
+        LocalFileLogService localFileLogService)
     {
         try
         {
@@ -84,28 +87,45 @@ internal static class Program
             var selected = tpvs.Where(x => x.Selected).ToList();
             if (selected.Count == 0)
             {
-                Console.WriteLine("No hay locales seleccionados en la configuración.");
+                const string message = "No hay locales seleccionados en la configuración.";
+                Console.WriteLine(message);
+                localFileLogService.Write(message);
                 return 3;
             }
 
-            Console.WriteLine($"Iniciando sincronización {syncMode} para {selected.Count} locales.");
+            var startMessage = $"Iniciando sincronización {syncMode} para {selected.Count} locales.";
+            Console.WriteLine(startMessage);
+            localFileLogService.Write(startMessage);
             await syncRunnerService.RunAsync(
                 selected,
                 syncMode,
                 progress =>
                 {
-                    Console.WriteLine($"{DateTime.Now:HH:mm:ss} {progress.LocalDescripcion} | {progress.Etapa} | {progress.OverallPercent}%");
+                    var line = $"{progress.LocalDescripcion} | {progress.Etapa} | {progress.OverallPercent}%";
+                    Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}");
+                    localFileLogService.Write(line);
                 },
-                message => Console.WriteLine($"{DateTime.Now:HH:mm:ss} {message}"),
-                (tpv, state) => Console.WriteLine($"{DateTime.Now:HH:mm:ss} [{tpv.Descripcion}] {state}"),
+                message =>
+                {
+                    Console.WriteLine($"{DateTime.Now:HH:mm:ss} {message}");
+                    localFileLogService.Write(message);
+                },
+                (tpv, state) =>
+                {
+                    var line = $"[{tpv.Descripcion}] {state}";
+                    Console.WriteLine($"{DateTime.Now:HH:mm:ss} {line}");
+                    localFileLogService.Write(line);
+                },
                 CancellationToken.None);
 
             Console.WriteLine("Sincronización finalizada.");
+            localFileLogService.Write("Sincronización finalizada.");
             return 0;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine(ex.Message);
+            localFileLogService.Write($"ERROR: {ex}");
             return 1;
         }
     }
