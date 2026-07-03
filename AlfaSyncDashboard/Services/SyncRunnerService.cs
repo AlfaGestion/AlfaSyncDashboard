@@ -5,15 +5,18 @@ namespace AlfaSyncDashboard.Services;
 
 public sealed class SyncRunnerService
 {
+    private readonly LocalPendingSyncService _localPendingSyncService;
     private readonly ScriptExecutionService _scriptExecutionService;
     private readonly SyncLogService _logService;
     private readonly ExecutionLockService _lockService;
 
     public SyncRunnerService(
+        LocalPendingSyncService localPendingSyncService,
         ScriptExecutionService scriptExecutionService,
         SyncLogService logService,
         ExecutionLockService lockService)
     {
+        _localPendingSyncService = localPendingSyncService;
         _scriptExecutionService = scriptExecutionService;
         _logService = logService;
         _lockService = lockService;
@@ -45,6 +48,7 @@ public sealed class SyncRunnerService
                 {
                     updateLocalState?.Invoke(tpv, "Sincronizando...");
                     await _logService.WriteAsync(tpv.Descripcion, mode.ToString(), "Inicio de sincronización", "RUNNING", cancellationToken);
+                    await _localPendingSyncService.ProcessBeforePushAsync(tpv, appendLog, cancellationToken);
 
                     var stageResults = await _scriptExecutionService.ExecuteForLocalAsync(
                         tpv,

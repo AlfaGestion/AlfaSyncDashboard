@@ -10,6 +10,7 @@ La app permite:
 - probar la conexión a cada punto de venta
 - analizar diferencias entre central y local
 - controlar precios por lista
+- respetar cambios de precios o costos hechos directamente en un local antes de enviar desde central
 - consultar historial de sincronizaciones
 - crear o actualizar una tarea programada para automatizar la ejecución
 - enviar precios y costos
@@ -23,6 +24,27 @@ Antes de comenzar, verificar:
 - que la conexión a la base central esté bien configurada
 - que cada punto de venta tenga correctamente cargado `Server`, `Base`, `Usuario` y `Password`
 - que la aplicación pueda conectarse tanto a la base central como a las bases locales
+- que, si un local modifica precios o costos manualmente, ese local tenga disponible `dbo.SYNC_PRECIOS_SERVER`
+
+## Cambios manuales en locales
+
+En algunos puntos de venta puede ocurrir que un usuario modifique precios o costos directamente en la base local.
+
+Ejemplo habitual:
+
+- Marcos cambia un costo o un precio en el local
+
+Cuando eso pasa:
+
+- el cambio queda registrado en la base del local
+- un trigger genera un pendiente en `dbo.SYNC_PRECIOS_SERVER`
+- la app detecta ese pendiente antes de enviar información desde central
+
+Regla importante:
+
+- la app no debe enviar precios ni costos desde central hacia el local si antes existen pendientes locales sin procesar
+
+Esto evita pisar cambios hechos manualmente en el punto de venta.
 
 ## Pantalla principal
 
@@ -132,6 +154,16 @@ Sincroniza únicamente:
 
 Es la opción recomendada cuando se quiere actualizar precios y costos sin enviar tablas maestras.
 
+Antes de enviar desde central al local, la app revisa si ese local tiene pendientes en `dbo.SYNC_PRECIOS_SERVER`.
+
+Si encuentra pendientes:
+
+- primero toma los cambios locales y los sube al central
+- recién cuando no quedan pendientes resueltos por procesar continúa con el envío normal
+- si ocurre un error en ese paso previo, la sincronización del local se detiene
+
+Esto aplica tanto para costos como para precios.
+
 Orden de ejecución:
 
 1. `Artículos`
@@ -152,6 +184,8 @@ Sincroniza:
 - precios
 
 Usar esta opción cuando se necesita una actualización completa del local.
+
+Igual que en `Enviar precios y costos`, antes de empezar la app procesa primero los cambios locales pendientes de precios o costos si existen.
 
 Orden de ejecución:
 
@@ -176,6 +210,9 @@ La sincronización trabaja por conexión directa al local.
 
 La app:
 
+- se conecta al local
+- verifica si existe `dbo.SYNC_PRECIOS_SERVER`
+- si la tabla existe, procesa primero los pendientes locales de precios y costos
 - lee los datos desde central
 - crea una tabla temporal en el local
 - copia los datos en bloque
@@ -183,6 +220,23 @@ La app:
 - inserta las filas faltantes
 
 Esto prioriza velocidad y evita depender de linked servers o del contenido de archivos `.sql`.
+
+### Qué hace la app con pendientes locales
+
+Si `dbo.SYNC_PRECIOS_SERVER` no existe en el local:
+
+- la app continúa con la sincronización normal
+
+Si la tabla existe:
+
+- busca registros con estado `PENDIENTE`
+- toma un pendiente por vez para evitar duplicados
+- si `IdLista` es `NULL`, copia el artículo actual del local al central
+- si `IdLista` tiene valor, copia el precio actual del local al central
+- si todo sale bien, marca el registro como `PROCESADO`
+- si ocurre un error, marca el registro como `ERROR` y guarda el mensaje
+
+Mientras existan pendientes locales sin resolver, la app no continúa con el envío normal desde central hacia ese local.
 
 ## Cómo se actualizan los scripts al instalar
 
@@ -220,6 +274,7 @@ En la parte inferior de la ventana se muestran mensajes con hora.
 Ejemplos de uso del log:
 
 - confirmar que un local fue tomado por el proceso
+- ver si la app detectó y procesó pendientes locales antes de sincronizar
 - ver en qué etapa está trabajando
 - detectar errores de conexión o de actualización
 - confirmar cuántas filas fueron procesadas
@@ -286,6 +341,8 @@ Si ya hay una ejecución activa, la siguiente no arranca.
 - no ejecutar sincronizaciones masivas sin antes probar con un local
 - revisar siempre `Conexión` antes de enviar datos
 - usar `Analizar seleccionados` antes de sincronizar si hay dudas
+- si un usuario cambia precios o costos en el local, ejecutar la sincronización cuanto antes para subir ese cambio al central
+- no borrar ni modificar manualmente registros de `SYNC_PRECIOS_SERVER` salvo revisión técnica
 - no cerrar la app mientras una sincronización esté en curso
 - revisar el log ante cualquier error
 - si se automatiza, validar el historial luego de la primera ejecución programada
@@ -303,7 +360,8 @@ Si aparece un error:
 1. revisar el mensaje exacto en el log
 2. verificar los datos de conexión del local
 3. probar acceso manual a la base del local
-4. volver a ejecutar con un solo local seleccionado
+4. revisar si el local tiene registros `ERROR` o `PROCESANDO` en `dbo.SYNC_PRECIOS_SERVER`
+5. volver a ejecutar con un solo local seleccionado
 
 Si el error persiste, registrar:
 

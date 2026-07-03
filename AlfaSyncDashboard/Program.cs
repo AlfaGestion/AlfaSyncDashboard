@@ -37,10 +37,11 @@ internal static class Program
         var analysisService = new AnalysisService(appSettings);
         var priceControlService = new PriceControlService(appSettings);
         var scriptExecutorService = new ScriptExecutionService(appSettings);
+        var localPendingSyncService = new LocalPendingSyncService(appSettings);
         var logService = new SyncLogService(appSettings);
         var localFileLogService = new LocalFileLogService();
         var lockService = new ExecutionLockService();
-        var syncRunnerService = new SyncRunnerService(scriptExecutorService, logService, lockService);
+        var syncRunnerService = new SyncRunnerService(localPendingSyncService, scriptExecutorService, logService, lockService);
         var scheduledTaskService = new ScheduledTaskService();
 
         if (isConsoleMode)
