@@ -16,9 +16,11 @@ public sealed class PriceControlForm : Form
     private readonly ComboBox _cmbList = new();
     private readonly TextBox _txtTipoLista = new();
     private readonly ComboBox _cmbPriceColumn = new();
+    private readonly CheckBox _chkOnlyDifferences = new();
     private readonly Button _btnLoad = new();
     private readonly Label _lblStatus = new();
     private readonly DataGridView _grid = new();
+    private PriceControlResult? _lastResult;
     private bool _isLoading;
 
     public PriceControlForm(PriceControlService service, IReadOnlyList<TpvInfo> locals)
@@ -94,6 +96,10 @@ public sealed class PriceControlForm : Form
         _cmbPriceColumn.SelectedIndex = 0;
         _cmbPriceColumn.SelectedIndexChanged += async (_, _) => await AutoRefreshAsync();
 
+        _chkOnlyDifferences.Text = "Solo con diferencia";
+        _chkOnlyDifferences.AutoSize = true;
+        _chkOnlyDifferences.CheckedChanged += (_, _) => RebindCurrentResult();
+
         _btnLoad.Text = "Consultar";
         _btnLoad.AutoSize = true;
         _btnLoad.Click += async (_, _) => await LoadDataAsync();
@@ -111,6 +117,7 @@ public sealed class PriceControlForm : Form
 
         top.Controls.Add(new Label { Text = "Tipo lista", AutoSize = true, Anchor = AnchorStyles.Left }, 6, 1);
         top.Controls.Add(_txtTipoLista, 7, 1);
+        top.Controls.Add(_chkOnlyDifferences, 8, 1);
         top.Controls.Add(_btnLoad, 9, 1);
 
         _lblStatus.Dock = DockStyle.Top;
@@ -187,15 +194,8 @@ public sealed class PriceControlForm : Form
             _lblStatus.Text = "Consultando datos...";
 
             var result = await _service.LoadAsync(_locals, request);
-            BindResult(result);
-            var detail = string.Join(" | ", _locals.Select(local =>
-            {
-                var key = BuildLocalKey(local);
-                return result.LocalErrors.TryGetValue(key, out var error)
-                    ? $"{local.Descripcion}: ERROR"
-                    : $"{local.Descripcion}: {result.LocalMatches.GetValueOrDefault(key)} encontrados";
-            }));
-            _lblStatus.Text = $"Consulta finalizada. Artículos: {result.Rows.Count}. {detail}";
+            _lastResult = result;
+            UpdateGridAndStatus(result);
         }
         catch (Exception ex)
         {
@@ -241,7 +241,31 @@ public sealed class PriceControlForm : Form
         return request;
     }
 
-    private void BindResult(PriceControlResult result)
+    private void RebindCurrentResult()
+    {
+        if (_lastResult is not null)
+            UpdateGridAndStatus(_lastResult);
+    }
+
+    private void UpdateGridAndStatus(PriceControlResult result)
+    {
+        var visibleCount = BindResult(result);
+        var detail = string.Join(" | ", _locals.Select(local =>
+        {
+            var key = BuildLocalKey(local);
+            return result.LocalErrors.ContainsKey(key)
+                ? $"{local.Descripcion}: ERROR"
+                : $"{local.Descripcion}: {result.LocalMatches.GetValueOrDefault(key)} encontrados";
+        }));
+
+        var filterText = _chkOnlyDifferences.Checked
+            ? $" Mostrando con diferencia: {visibleCount}."
+            : string.Empty;
+
+        _lblStatus.Text = $"Consulta finalizada. Artículos: {result.Rows.Count}.{filterText} {detail}".Trim();
+    }
+
+    private int BindResult(PriceControlResult result)
     {
         var table = new DataTable();
         table.Columns.Add("IDARTICULO", typeof(string));
@@ -251,7 +275,11 @@ public sealed class PriceControlForm : Form
         foreach (var local in _locals)
             table.Columns.Add(BuildLocalColumnName(local), typeof(decimal));
 
-        foreach (var row in result.Rows)
+        var rowsToShow = _chkOnlyDifferences.Checked
+            ? result.Rows.Where(HasDifferences).ToList()
+            : result.Rows;
+
+        foreach (var row in rowsToShow)
         {
             var dataRow = table.NewRow();
             dataRow["IDARTICULO"] = row.ArticleId;
@@ -285,6 +313,8 @@ public sealed class PriceControlForm : Form
                 : $"{local.Descripcion} ({result.LocalMatches.GetValueOrDefault(key)})";
             _grid.Columns[column].DefaultCellStyle.Format = "N4";
         }
+
+        return rowsToShow.Count;
     }
 
     private void GridOnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
@@ -325,4 +355,18 @@ public sealed class PriceControlForm : Form
 
     private static string BuildLocalColumnName(TpvInfo local)
         => $"LOCAL_{local.Codigo}";
+
+    private bool HasDifferences(PriceControlRow row)
+    {
+        foreach (var local in _locals)
+        {
+            var key = BuildLocalKey(local);
+            var localValue = row.LocalValues.TryGetValue(key, out var value) ? value : null;
+
+            if (row.CentralValue != localValue)
+                return true;
+        }
+
+        return false;
+    }
 }
